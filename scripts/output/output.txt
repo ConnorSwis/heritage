@@ -1,0 +1,420 @@
+@/app/index.tsx
+```
+// App.tsx
+
+import React from "react";
+import { NavigationContainer } from "@react-navigation/native";
+import { createStackNavigator } from "@react-navigation/stack";
+import { AuthProvider } from "@/providers/AuthProvider";
+import ProtectedRoute from "@/providers/ProtectedRoute";
+import AuthScreen from "@/screens/AuthScreen";
+import HomeScreen from "@/screens/HomeScreen";
+import ProfileScreen from "@/screens/ProfileScreen";
+
+const ProtectedHomeScreen = () => (
+  <ProtectedRoute routeName="Home">
+    <HomeScreen />
+  </ProtectedRoute>
+);
+
+const ProtectedProfileScreen = () => (
+  <ProtectedRoute routeName="Profile">
+    <ProfileScreen />
+  </ProtectedRoute>
+);
+
+type RootStackParamList = {
+  Auth: undefined;
+  Home: undefined;
+  Profile: undefined;
+};
+
+const Stack = createStackNavigator<RootStackParamList>();
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <NavigationContainer independent>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Auth" component={AuthScreen} />
+          <Stack.Screen name="Home" component={ProtectedHomeScreen} />
+          <Stack.Screen name="Profile" component={ProtectedProfileScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </AuthProvider>
+  );
+}
+
+```
+
+@/app/_layout.tsx
+```
+import { Stack } from "expo-router";
+
+export default function RootLayout() {
+  return (
+    <Stack>
+      <Stack.Screen name="index" options={{ headerShown: false }} />
+    </Stack>
+  );
+}
+
+```
+
+@/providers/ProtectedRoute.tsx
+```
+import React, { useEffect } from "react";
+import { useNavigation, NavigationProp } from "@react-navigation/native";
+import { useAuth } from "@/providers/AuthProvider";
+import AuthScreen from "@/screens/AuthScreen";
+
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+  routeName: string;
+}
+
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
+  children,
+  routeName,
+}) => {
+  const { user, setLastAttemptedRoute } = useAuth();
+  const navigation = useNavigation<NavigationProp<any>>();
+
+  useEffect(() => {
+    if (!user) {
+      setLastAttemptedRoute(routeName);
+      navigation.navigate("Auth");
+    }
+  }, [user, navigation, setLastAttemptedRoute, routeName]);
+
+  if (!user) {
+    return <>{AuthScreen}</>;
+  }
+
+  return <>{children}</>;
+};
+
+export default ProtectedRoute;
+
+```
+
+@/providers/AuthProvider.tsx
+```
+// AuthProvider.tsx
+
+import React, { createContext, useContext, useEffect, useState } from "react";
+import {
+  initializeAuth,
+  onAuthStateChanged,
+  User,
+  getReactNativePersistence,
+} from "@firebase/auth";
+import { initializeApp } from "@firebase/app";
+import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
+import { config } from "@/constants/config";
+
+const { firebaseConfig } = config;
+
+const app = initializeApp(firebaseConfig);
+const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(ReactNativeAsyncStorage),
+});
+
+interface AuthContextType {
+  user: User | null;
+  setUser: (user: User | null) => void;
+  lastAttemptedRoute: string | null;
+  setLastAttemptedRoute: (route: string | null) => void;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [lastAttemptedRoute, setLastAttemptedRoute] = useState<string | null>(
+    null
+  );
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+    });
+    return () => unsubscribe();
+  }, [auth]);
+
+  return (
+    <AuthContext.Provider
+      value={{ user, setUser, lastAttemptedRoute, setLastAttemptedRoute }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+};
+
+```
+
+@/screens/AuthScreen.tsx
+```
+// AuthScreen.tsx
+
+import React, { useState, useEffect } from "react";
+import { View, Text, TextInput, Button, StyleSheet } from "react-native";
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+} from "@firebase/auth";
+import { useAuth } from "@/providers/AuthProvider";
+import { useNavigation, NavigationProp } from "@react-navigation/native";
+type RootStackParamList = {
+  Auth: undefined;
+  Home: undefined;
+  Profile: undefined;
+};
+const AuthScreen: React.FC = () => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isLogin, setIsLogin] = useState(true);
+  const { user, setUser, lastAttemptedRoute, setLastAttemptedRoute } =
+    useAuth();
+  const auth = getAuth();
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
+
+  const handleAuth = async () => {
+    try {
+      let userCredential;
+      if (isLogin) {
+        userCredential = await signInWithEmailAndPassword(
+          auth,
+          email,
+          password
+        );
+      } else {
+        userCredential = await createUserWithEmailAndPassword(
+          auth,
+          email,
+          password
+        );
+      }
+      setUser(userCredential.user);
+      console.log("User authenticated successfully");
+    } catch (error: any) {
+      if (error.name === "FirebaseError") {
+        switch (error.code) {
+          case "auth/email-already-in-use":
+            console.log("Email already in use");
+            break;
+
+          case "auth/invalid-email":
+            console.log("Invalid email");
+            break;
+
+          case "auth/weak-password":
+            console.log("Weak password");
+            break;
+
+          case "auth/invalid-credential":
+            console.log("Invalid credential");
+            break;
+
+          //   case "auth/too-many-requests":
+          //     console.log("Too many requests");
+          //     break;
+
+          default:
+            console.log("Error message:", error.message);
+            console.log("Error name:", error.name);
+            console.log("Error stack:", error.stack);
+            for (const key in error) {
+              if (error.hasOwnProperty(key)) {
+                console.log(`${key}: ${error[key]}`);
+              }
+            }
+            const propertyNames = Object.getOwnPropertyNames(error);
+            propertyNames.forEach((propertyName) => {
+              console.log(`${propertyName}: ${error[propertyName]}`);
+            });
+            break;
+        }
+      }
+    }
+  };
+
+  useEffect(() => {
+    const currentRouteName =
+      navigation.getState().routes[navigation.getState().routes.length - 1]
+        .name;
+
+    // Ensure lastAttemptedRoute is treated as a keyof RootStackParamList
+    if (user && lastAttemptedRoute && currentRouteName !== lastAttemptedRoute) {
+      navigation.navigate(lastAttemptedRoute as keyof RootStackParamList);
+      setLastAttemptedRoute(null); // Reset the last attempted route after navigating
+    } else if (!user) {
+      navigation.navigate("Home"); // Default to home if not logged in
+    }
+  }, [user, lastAttemptedRoute, navigation]);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>{isLogin ? "Sign In" : "Sign Up"}</Text>
+      <TextInput
+        style={styles.input}
+        value={email}
+        onChangeText={setEmail}
+        placeholder="Email"
+        autoCapitalize="none"
+      />
+      <TextInput
+        style={styles.input}
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Password"
+        secureTextEntry
+      />
+      <Button
+        title={isLogin ? "Sign In" : "Sign Up"}
+        onPress={handleAuth}
+        color="#3498db"
+      />
+      <Text style={styles.toggleText} onPress={() => setIsLogin(!isLogin)}>
+        {isLogin
+          ? "Don't have an account? Sign Up"
+          : "Already have an account? Sign In"}
+      </Text>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  title: {
+    fontSize: 24,
+    marginBottom: 16,
+  },
+  input: {
+    height: 40,
+    borderColor: "#ddd",
+    borderWidth: 1,
+    marginBottom: 16,
+    padding: 8,
+    width: "80%",
+    borderRadius: 4,
+  },
+  toggleText: {
+    marginTop: 20,
+    color: "#3498db",
+  },
+});
+
+export default AuthScreen;
+
+```
+
+@/screens/ProfileScreen.tsx
+```
+import React from "react";
+import { View, Text, Button, StyleSheet } from "react-native";
+import { NavigationProp, useNavigation } from "@react-navigation/native";
+import { useAuth } from "@/providers/AuthProvider";
+
+type RootStackParamList = {
+  Auth: undefined;
+  Home: undefined;
+  Profile: undefined;
+};
+const ProfileScreen: React.FC = () => {
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
+  const { user } = useAuth();
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Profile Screen</Text>
+      <Button title="Go to Home" onPress={() => navigation.navigate("Home")} />
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  title: {
+    fontSize: 24,
+    marginBottom: 16,
+  },
+});
+
+export default ProfileScreen;
+
+```
+
+@/screens/HomeScreen.tsx
+```
+import React from "react";
+import { View, Text, Button, StyleSheet } from "react-native";
+import { useAuth } from "@/providers/AuthProvider";
+import { getAuth, signOut } from "@firebase/auth";
+import { NavigationProp, useNavigation } from "@react-navigation/native";
+
+type RootStackParamList = {
+  Auth: undefined;
+  Home: undefined;
+  Profile: undefined;
+};
+const HomeScreen: React.FC = () => {
+  const { user } = useAuth();
+  const auth = getAuth();
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Error logging out:", error);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Welcome, {user?.email}!</Text>
+      <Button
+        title="Go to Profile"
+        onPress={() => navigation.navigate("Profile")}
+      />
+      <Button title="Logout" onPress={handleLogout} />
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  title: {
+    fontSize: 24,
+    marginBottom: 16,
+  },
+});
+
+export default HomeScreen;
+
+```
+
